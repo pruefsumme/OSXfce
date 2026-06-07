@@ -20,7 +20,7 @@ Options:
   -h, --help          Show this help.
 
 Default behavior installs upstream dependencies, builds the custom dock and
-notification applet, installs the appmenu plugin, and applies profile/default.
+notification applet, attempts the appmenu plugin, and applies profile/default.
 USAGE
 }
 
@@ -77,7 +77,8 @@ install_arch_deps() {
     log "Installing Arch package dependencies"
     sudo pacman -S --needed \
         base-devel git rsync sudo fontconfig pkgconf gtk-update-icon-cache \
-        gtk3 gtk4 glib2 sqlite rust meson ninja cmake vala \
+        gtk3 gtk4 glib2 glib2-devel gobject-introspection python-setuptools \
+        sqlite rust meson ninja cmake vala appmenu-gtk-module libdbusmenu-glib libdbusmenu-gtk3 \
         xfce4-panel xfconf xfce4-settings xfdesktop xfwm4 xfce4-appfinder \
         xfce4-pulseaudio-plugin xfce4-weather-plugin xfce4-notes-plugin xfce4-notifyd \
         network-manager-applet
@@ -178,12 +179,15 @@ install_appmenu() {
     fi
 
     log "Installing Vala AppMenu AUR packages"
+    warn "Skipping the old vala-panel build; current XFCE appmenu packages do not need it."
     warn "If you have mixed stable and -git appmenu packages, uninstall those first."
-    aur_makepkg "vala-panel"
-    if ! aur_makepkg "vala-panel-appmenu" --pkg vala-panel-appmenu-xfce; then
-        warn "split-package build failed; retrying full vala-panel-appmenu package"
-        aur_makepkg "vala-panel-appmenu"
+    if aur_makepkg "appmenu-glib-translator-git" &&
+        aur_makepkg "vala-panel-appmenu" --pkg vala-panel-appmenu-xfce; then
+        return
     fi
+
+    warn "Vala AppMenu failed to build; continuing without aborting the OSXfce install."
+    warn "You can retry later with ./install.sh, or use ./install.sh --skip-appmenu."
 }
 
 apply_profile() {
