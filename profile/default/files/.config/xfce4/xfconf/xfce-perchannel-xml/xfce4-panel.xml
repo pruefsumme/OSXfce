@@ -50,7 +50,7 @@
   <property name="plugins" type="empty">
     <property name="plugin-1" type="string" value="applicationsmenu">
       <property name="button-title" type="string" value=""/>
-      <property name="button-icon" type="string" value="@HOME@/.local/share/osxfce/icons/osx-start-menu.png"/>
+      <property name="button-icon" type="string" value="@HOME@/.local/share/osxfce/icons/start-menu.png"/>
       <property name="show-button-title" type="bool" value="true"/>
       <property name="custom-menu" type="bool" value="false"/>
       <property name="custom-menu-file" type="string" value=""/>
@@ -82,7 +82,7 @@
     </property>
     <property name="plugin-10" type="string" value="actions">
       <property name="button-title" type="uint" value="3"/>
-      <property name="custom-title" type="string" value=""/>
+      <property name="custom-title" type="string" value="@USER_NAME@ "/>
     </property>
     <property name="plugin-19" type="string" value="appmenu">
       <property name="plugins" type="empty">
@@ -124,7 +124,45 @@
       <property name="enable-keyboard-shortcuts" type="bool" value="true"/>
       
     </property>
-    <property name="plugin-41" type="string" value="weather"/>
+    <property name="plugin-41" type="string" value="weather">
+      <property name="location" type="empty">
+        <property name="name" type="string" value="Olsztyn, Warmian-Masurian Voivodeship, Poland"/>
+        <property name="latitude" type="string" value="53.783760"/>
+        <property name="longitude" type="string" value="20.492720"/>
+      </property>
+      <property name="msl" type="int" value="133"/>
+      <property name="timezone" type="string" value="Europe/Warsaw"/>
+      <property name="offset" type="string" value="+02:00"/>
+      <property name="cache-max-age" type="int" value="172800"/>
+      <property name="power-saving" type="bool" value="true"/>
+      <property name="units" type="empty">
+        <property name="temperature" type="int" value="0"/>
+        <property name="pressure" type="int" value="0"/>
+        <property name="windspeed" type="int" value="0"/>
+        <property name="precipitation" type="int" value="0"/>
+        <property name="altitude" type="int" value="0"/>
+        <property name="apparent-temperature" type="int" value="2"/>
+      </property>
+      <property name="round" type="bool" value="true"/>
+      <property name="single-row" type="bool" value="true"/>
+      <property name="tooltip-style" type="int" value="1"/>
+      <property name="forecast" type="empty">
+        <property name="layout" type="int" value="1"/>
+        <property name="days" type="int" value="5"/>
+      </property>
+      <property name="theme-dir" type="string" value="/usr/share/xfce4/weather/icons/liquid-dark"/>
+      <property name="scrollbox" type="empty">
+        <property name="show" type="bool" value="true"/>
+        <property name="animate" type="bool" value="true"/>
+        <property name="lines" type="int" value="1"/>
+        <property name="color" type="string" value="rgba(0,0,0,0)"/>
+        <property name="use-color" type="bool" value="false"/>
+        <property name="font" type="string" value="Lucida Sans 11"/>
+      </property>
+      <property name="labels" type="empty">
+        <property name="label0" type="int" value="3"/>
+      </property>
+    </property>
     <property name="plugin-43" type="string" value="separator">
       <property name="style" type="uint" value="0"/>
     </property>

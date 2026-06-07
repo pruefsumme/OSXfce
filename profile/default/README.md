@@ -9,8 +9,9 @@ It includes selected sanitized dotfiles only:
 - XFCE appearance/window-manager/notify settings
 - XFCE panel launcher files
 - Custom XFCE start menu icon
+- Default weather location for Olsztyn, Poland
 - OSDockX theme files
 
 It intentionally excludes wallpapers, desktop icon positions, hardware/display
-state, old notification history, personal weather location, private custom icon
-paths from the source machine, and user-specific names.
+state, old notification history, private custom icon paths from the source
+machine, and user-specific names.

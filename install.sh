@@ -155,6 +155,41 @@ install_osdockx() {
     (cd "$repo" && ./install.sh)
 }
 
+install_osdockx_autostart() {
+    local autostart_dir="$HOME/.config/autostart"
+    local autostart_file="$autostart_dir/dev.pruefsumme.OSDockX.desktop"
+    local system_file="/usr/share/applications/dev.pruefsumme.OSDockX.desktop"
+
+    log "Enabling OSDockX autostart for the current user"
+    mkdir -p "$autostart_dir"
+    if [ -f "$system_file" ]; then
+        cp -a "$system_file" "$autostart_file"
+    else
+        printf '%s\n' \
+            '[Desktop Entry]' \
+            'Type=Application' \
+            'Name=OSDockX' \
+            'Comment=A lightweight OSX-inspired dock for Linux/X11' \
+            'Exec=osdockx' \
+            'Terminal=false' \
+            'Categories=Utility;' \
+            'StartupNotify=false' \
+            > "$autostart_file"
+    fi
+
+    if command -v osdockx >/dev/null 2>&1; then
+        perl -0pi -e 's#^Exec=.*$#Exec=osdockx#m' "$autostart_file"
+    fi
+    grep -q '^X-GNOME-Autostart-enabled=' "$autostart_file" ||
+        printf '%s\n' 'X-GNOME-Autostart-enabled=true' >> "$autostart_file"
+
+    if [ -n "${DISPLAY:-}" ] && command -v osdockx >/dev/null 2>&1; then
+        if ! command -v pgrep >/dev/null 2>&1 || ! pgrep -u "$(id -u)" -x osdockx >/dev/null 2>&1; then
+            osdockx >/dev/null 2>&1 &
+        fi
+    fi
+}
+
 install_osnotificationx() {
     local repo="$BUILD_ROOT/src/OSNotificationX"
 
@@ -237,6 +272,8 @@ install_appmenu() {
 apply_profile() {
     local files_dir="$PROFILE_DIR/files"
     local backup_dir="$HOME/.local/share/osxfce/backups/$(date +%Y%m%d-%H%M%S)"
+    local account_name
+    local gecos
 
     if [ "$SKIP_PROFILE" -eq 1 ]; then
         warn "skipping XFCE profile application"
@@ -247,7 +284,7 @@ apply_profile() {
 
     log "Backing up existing matching config to $backup_dir"
     mkdir -p "$backup_dir"
-    for path in .config/xfce4 .config/osdockx/themes .local/share/osxfce/icons; do
+    for path in .config/xfce4 .config/osdockx/themes .config/autostart/dev.pruefsumme.OSDockX.desktop .local/share/osxfce/icons; do
         if [ -e "$HOME/$path" ]; then
             mkdir -p "$backup_dir/$(dirname "$path")"
             cp -a "$HOME/$path" "$backup_dir/$path"
@@ -264,12 +301,19 @@ apply_profile() {
     log "Applying sanitized XFCE profile"
     cp -a "$files_dir/." "$HOME/"
 
+    account_name="$(id -un)"
+    if command -v getent >/dev/null 2>&1; then
+        gecos="$(getent passwd "$account_name" | cut -d: -f5 | cut -d, -f1 || true)"
+        [ -n "$gecos" ] && account_name="$gecos"
+    fi
+    export OSXFCE_USER_NAME="$account_name"
+
     placeholder_roots=()
     [ -d "$HOME/.config/xfce4" ] && placeholder_roots+=("$HOME/.config/xfce4")
     [ -d "$HOME/.config/osdockx" ] && placeholder_roots+=("$HOME/.config/osdockx")
     if [ "${#placeholder_roots[@]}" -gt 0 ]; then
         find "${placeholder_roots[@]}" -type f -print0 |
-            xargs -0r perl -0pi -e 's#\@HOME\@#$ENV{HOME}#g'
+            xargs -0r perl -0pi -e 's#\@HOME\@#$ENV{HOME}#g; s#\@USER_NAME\@#$ENV{OSXFCE_USER_NAME}#g'
     fi
 
     if command -v xfconf-query >/dev/null 2>&1; then
@@ -326,6 +370,7 @@ install_xfce_theme
 install_icon_theme
 install_cursor_theme
 install_osdockx
+install_osdockx_autostart
 install_osnotificationx
 install_appmenu
 apply_profile
