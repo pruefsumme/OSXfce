@@ -325,45 +325,24 @@ apply_profile() {
     fi
 }
 
-restart_panels() {
-    if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
-        warn "No graphical session detected; the new layout will appear on next XFCE login"
+offer_logout() {
+    if [ ! -t 0 ]; then
         return
     fi
 
-    if ! command -v xfce4-panel >/dev/null 2>&1; then
-        warn "xfce4-panel not found in PATH; skipping panel restart"
-        return
-    fi
-
-    log "Reloading XFCE panels so the new layout is visible right away"
-
-    if ! pgrep -u "$(id -u)" -x xfce4-panel >/dev/null 2>&1; then
-        warn "xfce4-panel is not running; the new layout will appear on next login"
-        return
-    fi
-
-    # Graceful --restart just asks the running panel to quit, but the panel
-    # still has the old layout cached and xfce4-session may respawn it before
-    # the new XML files are read. Force-kill both the panel and xfconfd so
-    # the session respawns them from scratch against the new config.
-    local killed_panel=0
-    if pkill -KILL -u "$(id -u)" -x xfce4-panel >/dev/null 2>&1; then
-        killed_panel=1
-    fi
-    pkill -KILL -u "$(id -u)" -x xfconfd >/dev/null 2>&1 || true
-
-    if [ "$killed_panel" -eq 1 ]; then
-        # Give xfce4-session a moment to notice and respawn.
-        sleep 2
-        if pgrep -u "$(id -u)" -x xfce4-panel >/dev/null 2>&1; then
-            log "Panel and xfconfd reloaded; xfce4-session respawned them with the new layout"
-        else
-            warn "Panel was stopped but xfce4-session did not respawn it; please log out and back in to see the new layout"
-        fi
-    else
-        warn "Could not stop the running panel; please log out and back in to see the new layout"
-    fi
+    local response
+    printf '\nThe new panel layout will not appear until you log out and back in.\n'
+    read -r -p "Log out now? [y/N] " response
+    case "$response" in
+        [yY]|[yY][eE][sS])
+            if [ -z "${DISPLAY:-}" ] || ! command -v xfce4-session-logout >/dev/null 2>&1; then
+                warn "Cannot log out automatically; please log out via the XFCE session menu when you're ready"
+                return
+            fi
+            log "Logging out of XFCE so the new layout appears on next login"
+            xfce4-session-logout --logout || warn "Logout failed; please log out via the XFCE session menu when you're ready"
+            ;;
+    esac
 }
 
 while [ "$#" -gt 0 ]; do
@@ -411,6 +390,6 @@ install_osdockx_autostart
 install_osnotificationx
 install_appmenu
 apply_profile
-restart_panels
+offer_logout
 
-log "Done. Log out and back into XFCE for the cleanest reload."
+log "Done. Log out via the XFCE session menu to see the new layout."
