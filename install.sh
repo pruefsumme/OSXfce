@@ -7,6 +7,7 @@ PROFILE_DIR="$ROOT_DIR/profile/default"
 INSTALL_APPMENU=1
 SKIP_PACMAN=0
 SKIP_PROFILE=0
+WINDOW_SCALE=1x
 
 usage() {
     cat <<'USAGE'
@@ -21,6 +22,10 @@ Options:
 
 Default behavior installs upstream dependencies, builds the custom dock and
 notification applet, attempts the appmenu plugin, and applies profile/default.
+
+The installer will ask whether XFCE4 is running at 1x or 2x window scaling so
+the panel background uses the correct asset. On a non-interactive run it
+defaults to 1x; you can re-run from a TTY to be prompted.
 USAGE
 }
 
@@ -348,6 +353,56 @@ apply_profile() {
     fi
 }
 
+# Ask the user whether XFCE4 is running at 1x or 2x window scaling so the
+# panel background uses the correct asset. The OSX-Lion theme ships a 16 px
+# tall panel-bg.png which tiles on HiDPI/2x displays; the 32 px version in
+# $HOME/.local/share/osxfce/panel-bg-32px/panel-bg.png (installed by
+# apply_profile) is a drop-in replacement for 2x users.
+prompt_window_scale() {
+    if [ ! -t 0 ]; then
+        warn "not running on a TTY; defaulting window scale to 1x (re-run from a terminal to be prompted)"
+        WINDOW_SCALE=1x
+        return
+    fi
+
+    local response
+    printf '\nXFCE4 window scaling:\n'
+    printf '  1) 1x  (default — standard DPI)\n'
+    printf '  2) 2x  (HiDPI / 4K / Retina)\n'
+    read -r -p "Choice [1]: " response
+    case "$response" in
+        2|2x|2X) WINDOW_SCALE=2x ;;
+        *)       WINDOW_SCALE=1x ;;
+    esac
+    log "Window scale: $WINDOW_SCALE"
+}
+
+# For 2x users, overwrite the OSX-Lion theme's panel-bg.png with the 32 px
+# version. The xfce4-panel.xml in profile/default already points at this
+# path, so no XML change is required.
+apply_panel_background() {
+    local theme_dir="$HOME/.themes/OSX-Lion"
+    local src="$HOME/.local/share/osxfce/panel-bg-32px/panel-bg.png"
+    local dest="$theme_dir/panel-bg.png"
+
+    if [ "$WINDOW_SCALE" != "2x" ]; then
+        log "Keeping 1x panel background from OSX-Lion theme"
+        return
+    fi
+
+    if [ ! -f "$src" ]; then
+        warn "32 px panel background not found at $src; skipping override"
+        return
+    fi
+    if [ ! -d "$theme_dir" ]; then
+        warn "OSX-Lion theme directory not found at $theme_dir; skipping panel background override"
+        return
+    fi
+
+    log "Installing 32 px panel background for 2x window scaling"
+    cp -f "$src" "$dest"
+}
+
 offer_logout() {
     if [ ! -t 0 ]; then
         return
@@ -411,7 +466,9 @@ install_cursor_theme
 install_osdockx
 install_osnotificationx
 install_appmenu
+prompt_window_scale
 apply_profile
+apply_panel_background
 install_osdockx_autostart
 offer_logout
 
