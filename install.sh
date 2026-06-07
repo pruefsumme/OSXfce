@@ -323,9 +323,29 @@ apply_profile() {
         xfconf-query -c xsettings -p /Gtk/FontName -s "Lucida Sans Unicode 11" 2>/dev/null || true
         xfconf-query -c xfwm4 -p /general/theme -s OSX-Lion 2>/dev/null || true
     fi
+}
 
-    if command -v xfce4-panel >/dev/null 2>&1; then
-        xfce4-panel --restart >/dev/null 2>&1 || true
+restart_panels() {
+    if [ -z "${DISPLAY:-}" ]; then
+        warn "DISPLAY is not set; skipping panel restart (the new layout will appear on next login)"
+        return
+    fi
+
+    if ! command -v xfce4-panel >/dev/null 2>&1; then
+        warn "xfce4-panel not found in PATH; skipping panel restart"
+        return
+    fi
+
+    if ! pgrep -u "$(id -u)" -x xfce4-panel >/dev/null 2>&1; then
+        warn "xfce4-panel is not running; the new layout will appear on next login"
+        return
+    fi
+
+    log "Restarting XFCE panels so the new layout is visible right away"
+    if xfce4-panel --restart >/dev/null 2>&1; then
+        log "Panels restarted"
+    else
+        warn "xfce4-panel --restart failed; try logging out and back in to see the new layout"
     fi
 }
 
@@ -374,5 +394,6 @@ install_osdockx_autostart
 install_osnotificationx
 install_appmenu
 apply_profile
+restart_panels
 
 log "Done. Log out and back into XFCE for the cleanest reload."
