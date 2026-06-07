@@ -78,10 +78,9 @@ install_arch_deps() {
     sudo pacman -S --needed \
         base-devel git rsync sudo fontconfig pkgconf gtk-update-icon-cache \
         gtk3 gtk4 glib2 sqlite rust meson ninja cmake vala \
-        xfce4-panel xfconf xfce4-settings xfdesktop xfwm4 xfce4-terminal xfce4-appfinder \
+        xfce4-panel xfconf xfce4-settings xfdesktop xfwm4 xfce4-appfinder \
         xfce4-pulseaudio-plugin xfce4-weather-plugin xfce4-notes-plugin xfce4-notifyd \
-        network-manager-applet thunar mousepad firefox chromium thunderbird falkon \
-        merkuro strawberry discord godot code kamoso discover virtualbox gimp
+        network-manager-applet
 }
 
 install_lucida_fonts() {
