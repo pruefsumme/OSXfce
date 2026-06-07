@@ -160,6 +160,25 @@ install_osdockx_autostart() {
     local autostart_file="$autostart_dir/dev.pruefsumme.OSDockX.desktop"
     local system_file="/usr/share/applications/dev.pruefsumme.OSDockX.desktop"
 
+    # Resolve the osdockx binary robustly. The OSDockX installer drops the
+    # binary at $XDG_BIN_HOME or $HOME/.local/bin, which is not always on
+    # $PATH for non-interactive scripts (e.g. when the installer is run
+    # from a fresh login TTY). The bare "osdockx" name in the autostart
+    # .desktop file would then be unresolvable on next login too.
+    local osdockx_bin=""
+    if command -v osdockx >/dev/null 2>&1; then
+        osdockx_bin="$(command -v osdockx)"
+    elif [ -x "${XDG_BIN_HOME:-}/osdockx" ]; then
+        osdockx_bin="${XDG_BIN_HOME:-}/osdockx"
+    elif [ -x "$HOME/.local/bin/osdockx" ]; then
+        osdockx_bin="$HOME/.local/bin/osdockx"
+    fi
+
+    if [ -z "$osdockx_bin" ]; then
+        warn "osdockx binary not found; skipping OSDockX autostart"
+        return
+    fi
+
     log "Enabling OSDockX autostart for the current user"
     mkdir -p "$autostart_dir"
     if [ -f "$system_file" ]; then
@@ -170,22 +189,26 @@ install_osdockx_autostart() {
             'Type=Application' \
             'Name=OSDockX' \
             'Comment=A lightweight OSX-inspired dock for Linux/X11' \
-            'Exec=osdockx' \
+            "Exec=$osdockx_bin" \
             'Terminal=false' \
             'Categories=Utility;' \
             'StartupNotify=false' \
             > "$autostart_file"
     fi
 
-    if command -v osdockx >/dev/null 2>&1; then
-        perl -0pi -e 's#^Exec=.*$#Exec=osdockx#m' "$autostart_file"
-    fi
+    # Use the full path in Exec= so XFCE can launch the dock on next login
+    # even if $HOME/.local/bin is not on the session's PATH.
+    perl -0pi -e "s#^Exec=.*\$#Exec=$osdockx_bin#m" "$autostart_file"
     grep -q '^X-GNOME-Autostart-enabled=' "$autostart_file" ||
         printf '%s\n' 'X-GNOME-Autostart-enabled=true' >> "$autostart_file"
 
-    if [ -n "${DISPLAY:-}" ] && command -v osdockx >/dev/null 2>&1; then
-        if ! command -v pgrep >/dev/null 2>&1 || ! pgrep -u "$(id -u)" -x osdockx >/dev/null 2>&1; then
-            osdockx >/dev/null 2>&1 &
+    # Start OSDockX in this session right away, so the user doesn't have to
+    # do it manually. nohup + disown keeps the dock alive after the install
+    # script exits (otherwise the backgrounded process gets SIGHUP'd).
+    if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
+        if ! pgrep -u "$(id -u)" -x osdockx >/dev/null 2>&1; then
+            nohup "$osdockx_bin" >/dev/null 2>&1 &
+            disown
         fi
     fi
 }
