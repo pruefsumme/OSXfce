@@ -326,8 +326,8 @@ apply_profile() {
 }
 
 restart_panels() {
-    if [ -z "${DISPLAY:-}" ]; then
-        warn "DISPLAY is not set; skipping panel restart (the new layout will appear on next login)"
+    if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+        warn "No graphical session detected; the new layout will appear on next XFCE login"
         return
     fi
 
@@ -336,16 +336,33 @@ restart_panels() {
         return
     fi
 
+    log "Reloading XFCE panels so the new layout is visible right away"
+
     if ! pgrep -u "$(id -u)" -x xfce4-panel >/dev/null 2>&1; then
         warn "xfce4-panel is not running; the new layout will appear on next login"
         return
     fi
 
-    log "Restarting XFCE panels so the new layout is visible right away"
-    if xfce4-panel --restart >/dev/null 2>&1; then
-        log "Panels restarted"
+    # Graceful --restart just asks the running panel to quit, but the panel
+    # still has the old layout cached and xfce4-session may respawn it before
+    # the new XML files are read. Force-kill both the panel and xfconfd so
+    # the session respawns them from scratch against the new config.
+    local killed_panel=0
+    if pkill -KILL -u "$(id -u)" -x xfce4-panel >/dev/null 2>&1; then
+        killed_panel=1
+    fi
+    pkill -KILL -u "$(id -u)" -x xfconfd >/dev/null 2>&1 || true
+
+    if [ "$killed_panel" -eq 1 ]; then
+        # Give xfce4-session a moment to notice and respawn.
+        sleep 2
+        if pgrep -u "$(id -u)" -x xfce4-panel >/dev/null 2>&1; then
+            log "Panel and xfconfd reloaded; xfce4-session respawned them with the new layout"
+        else
+            warn "Panel was stopped but xfce4-session did not respawn it; please log out and back in to see the new layout"
+        fi
     else
-        warn "xfce4-panel --restart failed; try logging out and back in to see the new layout"
+        warn "Could not stop the running panel; please log out and back in to see the new layout"
     fi
 }
 
