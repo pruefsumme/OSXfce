@@ -386,10 +386,10 @@ install_xfce_theme
 install_icon_theme
 install_cursor_theme
 install_osdockx
-install_osdockx_autostart
 install_osnotificationx
 install_appmenu
 apply_profile
+install_osdockx_autostart
 offer_logout
 
 log "Done. Log out via the XFCE session menu to see the new layout."
