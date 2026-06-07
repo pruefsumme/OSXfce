@@ -1,0 +1,38 @@
+<?xml version="1.1" encoding="UTF-8"?>
+
+<channel name="xfce4-notifyd" version="1.0">
+  <property name="log-max-size-enabled" type="bool" value="true"/>
+  <property name="plugin" type="empty">
+    <property name="log-icon-size" type="int" value="12"/>
+  </property>
+  <property name="applications" type="empty">
+    <property name="known_applications" type="array">
+      <value type="string" value="Backup"/>
+      <value type="string" value="Calendar"/>
+      <value type="string" value="chromium"/>
+      <value type="string" value="code"/>
+      <value type="string" value="Crash Reporting System"/>
+      <value type="string" value="discord"/>
+      <value type="string" value="FileZilla"/>
+      <value type="string" value="Mail"/>
+      <value type="string" value="Messages"/>
+      <value type="string" value="Mullvad VPN"/>
+      <value type="string" value="notify-send"/>
+      <value type="string" value="org.freedesktop.network-manager-applet"/>
+      <value type="string" value="org.gnome.Zenity"/>
+      <value type="string" value="org.kde.drkonqi"/>
+      <value type="string" value="org.kde.kdenlive"/>
+      <value type="string" value="org.mozilla.Thunderbird"/>
+      <value type="string" value="org.xfce.Thunar"/>
+      <value type="string" value="Strawberry"/>
+      <value type="string" value="System"/>
+      <value type="string" value="Thunderbird"/>
+      <value type="string" value="Xfce volume control"/>
+    </property>
+  </property>
+  <property name="date-time-custom-format" type="string" value="%a %H:%M:%S"/>
+  <property name="do-not-disturb" type="bool" value="false"/>
+  <property name="notification-log" type="bool" value="true"/>
+  <property name="log-level" type="string" value="always"/>
+  <property name="log-level-apps" type="string" value="except-blocked"/>
+</channel>
