@@ -163,31 +163,75 @@ install_osnotificationx() {
     (cd "$repo" && ./install-update.sh)
 }
 
-aur_makepkg() {
-    local package="$1"
-    shift
-    local repo="$BUILD_ROOT/aur/$package"
-
-    clone_or_update "https://aur.archlinux.org/$package.git" "$repo"
-    (cd "$repo" && makepkg -si --needed "$@")
-}
-
 install_appmenu() {
+    local repo="$BUILD_ROOT/aur/vala-panel-appmenu"
+    local conflicts=(
+        appmenu-glib-translator
+        appmenu-glib-translator-git
+        vala-panel-appmenu
+        vala-panel-appmenu-budgie
+        vala-panel-appmenu-budgie-git
+        vala-panel-appmenu-common-git
+        vala-panel-appmenu-jayatana
+        vala-panel-appmenu-jayatana-git
+        vala-panel-appmenu-locale
+        vala-panel-appmenu-locale-git
+        vala-panel-appmenu-mate
+        vala-panel-appmenu-mate-git
+        vala-panel-appmenu-registrar
+        vala-panel-appmenu-registrar-git
+        vala-panel-appmenu-valapanel
+        vala-panel-appmenu-valapanel-git
+        vala-panel-appmenu-xfce
+        vala-panel-appmenu-xfce-git
+    )
+    local installed=()
+    local packages=()
+
     if [ "$INSTALL_APPMENU" -eq 0 ]; then
         warn "skipping Vala AppMenu; panel layout still contains an appmenu slot"
         return
     fi
 
-    log "Installing Vala AppMenu AUR packages"
-    warn "Skipping the old vala-panel build; current XFCE appmenu packages do not need it."
-    warn "If you have mixed stable and -git appmenu packages, uninstall those first."
-    if aur_makepkg "appmenu-glib-translator-git" &&
-        aur_makepkg "vala-panel-appmenu" --pkg vala-panel-appmenu-xfce; then
+    log "Installing Vala AppMenu AUR package"
+    warn "Using the stable vala-panel-appmenu package; stable and -git AppMenu packages conflict."
+
+    if command -v pacman >/dev/null 2>&1; then
+        mapfile -t installed < <(pacman -Qq "${conflicts[@]}" 2>/dev/null || true)
+        if [ "${#installed[@]}" -gt 0 ]; then
+            warn "Removing installed AppMenu packages before rebuilding: ${installed[*]}"
+            sudo pacman -Rns "${installed[@]}"
+        fi
+    fi
+
+    clone_or_update "https://aur.archlinux.org/vala-panel-appmenu.git" "$repo"
+    if (
+        cd "$repo"
+        built_packages=()
+        export _build_mate=false
+        export _build_xfce=true
+        export _build_vala=false
+        export _build_budgie=false
+        export _build_registrar=true
+        export _build_translator=true
+
+        makepkg -sr
+
+        mapfile -t packages < <(makepkg --packagelist)
+        for package in "${packages[@]}"; do
+            case "$(basename "$package")" in
+                *-debug-*.pkg.tar.*) continue ;;
+            esac
+            [ -f "$package" ] && built_packages+=("$package")
+        done
+        [ "${#built_packages[@]}" -gt 0 ]
+        sudo pacman -U "${built_packages[@]}"
+    ); then
         return
     fi
 
-    warn "Vala AppMenu failed to build; continuing without aborting the OSXfce install."
-    warn "You can retry later with ./install.sh, or use ./install.sh --skip-appmenu."
+    warn "Vala AppMenu failed to build/install; continuing without aborting the OSXfce install."
+    warn "The rest of the theme will still be applied. You can retry later by running ./install.sh again."
 }
 
 apply_profile() {
@@ -225,7 +269,7 @@ apply_profile() {
     [ -d "$HOME/.config/osdockx" ] && placeholder_roots+=("$HOME/.config/osdockx")
     if [ "${#placeholder_roots[@]}" -gt 0 ]; then
         find "${placeholder_roots[@]}" -type f -print0 |
-            xargs -0r perl -0pi -e "s#\@HOME\@#$ENV{HOME}#g"
+            xargs -0r perl -0pi -e 's#\@HOME\@#$ENV{HOME}#g'
     fi
 
     if command -v xfconf-query >/dev/null 2>&1; then
