@@ -1,6 +1,6 @@
 # A blast of the aqua past
 
-Bring the bright, glossy feel of Mac OS X Lion to an XFCE desktop on Arch Linux: the menu bar, the dock, the icons, and a little bit of 2011 magic.
+Bring the bright, glossy feel of an OSX-inspired desktop from the 2008–2013 era to XFCE on your Linux system :)
 
 ![An OSXfce desktop with the Lion-inspired wallpaper, menu bar, and dock](assets/screenshots/desktop-preview.png)
 
@@ -20,14 +20,12 @@ For options such as skipping package installation or choosing another profile, s
 ./install.sh --help
 ```
 
-## Also check out
+## Built with
 
-OSXfce bundles a few lovely projects. Start with these from [pruefsumme](https://github.com/pruefsumme):
+OSXfce brings a few lovely projects together. The dock and notification experience are powered by projects from [pruefsumme](https://github.com/pruefsumme):
 
-- [OSDockX](https://github.com/pruefsumme/osdockx) — the macOS-inspired dock.
+- [OSDockX](https://github.com/pruefsumme/osdockx) — the dock.
 - [OSNotificationX](https://github.com/pruefsumme/OSNotificationX) — the notification applet.
-
-The setup also includes [Lucida Fonts](https://github.com/witt-bit/lucida-fonts), [OSX-Lion for XFCE](https://github.com/orchyn/XFCE), [Mac OS X Lion icons](https://github.com/B00merang-Artwork/Mac-OS-X-Lion), [WhiteSur cursors](https://github.com/vinceliuice/WhiteSur-cursors), and [Vala Panel AppMenu](https://aur.archlinux.org/packages/vala-panel-appmenu).
 
 ## A few more looks
 
