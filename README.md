@@ -19,7 +19,7 @@ From this folder, run:
 ./install.sh
 ```
 
-The installer fetches the theme, icons, fonts, dock, notification applet, and the included XFCE profile. It will ask about your window scale and may ask for your password to install the required Arch packages. When it finishes, log out and back in to enjoy the full effect.
+The installer fetches the theme, icons, fonts, dock, notification applet, and the included XFCE profile. It will ask whether to use normal 1x or HiDPI/Retina 2x window scaling and may ask for your password to install the required Arch packages. The 2x option keeps the display at its native resolution while scaling GTK, the panel, window decorations, and the initial dock size together. When it finishes, log out and back in to enjoy the full effect.
 
 For options such as skipping package installation or choosing another profile, see:
 

@@ -23,9 +23,10 @@ Options:
 Default behavior installs upstream dependencies, builds the custom dock and
 notification applet, attempts the appmenu plugin, and applies profile/default.
 
-The installer will ask whether XFCE4 is running at 1x or 2x window scaling so
-the panel background uses the correct asset. On a non-interactive run it
-defaults to 1x; you can re-run from a TTY to be prompted.
+The installer will ask whether XFCE4 should use 1x or 2x window scaling. The
+2x option configures GTK/XFCE, installs a HiDPI Xfwm theme, and uses Retina-
+appropriate panel and dock sizing. On a non-interactive run it defaults to 1x;
+you can re-run from a TTY to be prompted.
 USAGE
 }
 
@@ -81,7 +82,7 @@ install_arch_deps() {
 
     log "Installing Arch package dependencies"
     sudo pacman -S --needed \
-        base-devel git rsync sudo fontconfig pkgconf gtk-update-icon-cache \
+        base-devel git rsync sudo fontconfig pkgconf gtk-update-icon-cache imagemagick \
         gtk3 gtk4 glib2 glib2-devel gobject-introspection python-setuptools \
         sqlite rust meson ninja cmake vala appmenu-gtk-module libdbusmenu-glib libdbusmenu-gtk3 \
         xfce4-panel xfconf xfce4-settings xfdesktop xfwm4 xfce4-appfinder \
@@ -312,7 +313,7 @@ apply_profile() {
 
     log "Backing up existing matching config to $backup_dir"
     mkdir -p "$backup_dir"
-    for path in .config/xfce4 .config/osdockx/themes .config/autostart/dev.pruefsumme.OSDockX.desktop .local/share/osxfce/icons; do
+    for path in .config/xfce4 .config/osdockx/themes .config/autostart/dev.pruefsumme.OSDockX.desktop .config/autostart/nm-applet.desktop .local/share/osxfce/icons; do
         if [ -e "$HOME/$path" ]; then
             mkdir -p "$backup_dir/$(dirname "$path")"
             cp -a "$HOME/$path" "$backup_dir/$path"
@@ -353,11 +354,9 @@ apply_profile() {
     fi
 }
 
-# Ask the user whether XFCE4 is running at 1x or 2x window scaling so the
-# panel background uses the correct asset. The OSX-Lion theme ships a 16 px
-# tall panel-bg.png which tiles on HiDPI/2x displays; the 32 px version in
-# $HOME/.local/share/osxfce/panel-bg-32px/panel-bg.png (installed by
-# apply_profile) is a drop-in replacement for 2x users.
+# Ask the user whether XFCE4 should render at normal or HiDPI scale. The
+# selection is applied after the profile has been copied so the profile cannot
+# overwrite it.
 prompt_window_scale() {
     if [ ! -t 0 ]; then
         warn "not running on a TTY; defaulting window scale to 1x (re-run from a terminal to be prompted)"
@@ -377,12 +376,12 @@ prompt_window_scale() {
     log "Window scale: $WINDOW_SCALE"
 }
 
-# For 2x users, overwrite the OSX-Lion theme's panel-bg.png with the 32 px
-# version. The xfce4-panel.xml in profile/default already points at this
-# path, so no XML change is required.
+# For 2x users, overwrite the OSX-Lion theme's 35x24 panel texture with the
+# 70x48 version. The panel is 24 logical pixels high, so GTK renders this asset
+# at its native size when the window scale is 2x.
 apply_panel_background() {
     local theme_dir="$HOME/.themes/OSX-Lion"
-    local src="$HOME/.local/share/osxfce/panel-bg-32px/panel-bg.png"
+    local src="$HOME/.local/share/osxfce/panel-bg-2x/panel-bg.png"
     local dest="$theme_dir/panel-bg.png"
 
     if [ "$WINDOW_SCALE" != "2x" ]; then
@@ -391,7 +390,7 @@ apply_panel_background() {
     fi
 
     if [ ! -f "$src" ]; then
-        warn "32 px panel background not found at $src; skipping override"
+        warn "2x panel background not found at $src; skipping override"
         return
     fi
     if [ ! -d "$theme_dir" ]; then
@@ -399,8 +398,139 @@ apply_panel_background() {
         return
     fi
 
-    log "Installing 32 px panel background for 2x window scaling"
+    log "Installing 2x panel background"
     cp -f "$src" "$dest"
+}
+
+install_hidpi_xfwm_theme() {
+    local src="$HOME/.themes/OSX-Lion/xfwm4"
+    local theme_dir="$HOME/.themes/OSX-Lion-hidpi"
+    local dest="$theme_dir/xfwm4"
+
+    if [ "$WINDOW_SCALE" != "2x" ]; then
+        return
+    fi
+    if [ ! -d "$src" ]; then
+        warn "OSX-Lion Xfwm theme not found at $src; keeping the 1x window theme"
+        return
+    fi
+    if ! command -v magick >/dev/null 2>&1; then
+        warn "ImageMagick not found; keeping the 1x Xfwm theme"
+        return
+    fi
+
+    log "Generating OSX-Lion-hidpi Xfwm theme"
+    rm -rf "$theme_dir"
+    mkdir -p "$theme_dir"
+    cp -a "$src" "$dest"
+    find "$dest" -maxdepth 1 -type f \( -name '*.png' -o -name '*.xpm' \) -print0 |
+        xargs -0r magick mogrify -filter point -resize 200%
+
+    # Xfwm does not scale these theme metrics with GTK's window scale.
+    perl -0pi -e '
+        s/^(button_offset|maximized_offset|button_spacing)=(\d+)$/"$1=" . ($2 * 2)/gem
+    ' "$dest/themerc"
+}
+
+set_xfconf_value() {
+    local channel="$1"
+    local property="$2"
+    local type="$3"
+    local value="$4"
+
+    if xfconf-query -c "$channel" -p "$property" >/dev/null 2>&1; then
+        xfconf-query -c "$channel" -p "$property" -s "$value"
+    else
+        xfconf-query -c "$channel" -p "$property" -n -t "$type" -s "$value"
+    fi
+}
+
+apply_window_scale() {
+    local factor=1
+    local cursor_size=24
+    local systray_icon_size=16
+    local xfwm_theme="OSX-Lion"
+
+    if [ "$WINDOW_SCALE" = "2x" ]; then
+        factor=2
+        cursor_size=48
+        systray_icon_size=12
+        if [ -d "$HOME/.themes/OSX-Lion-hidpi/xfwm4" ]; then
+            xfwm_theme="OSX-Lion-hidpi"
+        fi
+    fi
+
+    if ! command -v xfconf-query >/dev/null 2>&1; then
+        warn "xfconf-query not found; select ${factor}x window scaling manually"
+        return
+    fi
+
+    log "Applying ${factor}x XFCE window scaling"
+    set_xfconf_value xsettings /Gdk/WindowScalingFactor int "$factor" ||
+        warn "could not set XFCE window scaling"
+    set_xfconf_value xsettings /Gtk/CursorThemeSize int "$cursor_size" ||
+        warn "could not set the cursor size"
+    set_xfconf_value xfwm4 /general/theme string "$xfwm_theme" ||
+        warn "could not select Xfwm theme $xfwm_theme"
+    # Xfwm scales the title font with the UI factor even though it does not
+    # scale legacy decoration assets. Doubling the point size clips the title.
+    set_xfconf_value xfwm4 /general/title_font string "Lucida Grande Bold 9" ||
+        warn "could not set the Xfwm title font"
+
+    # Legacy status icons can ignore the panel's HiDPI allocation. Cap the
+    # Notification Area icons below the panel-wide size to avoid edge clipping.
+    if [ "$(xfconf-query -c xfce4-panel -p /plugins/plugin-6 2>/dev/null || true)" = "systray" ]; then
+        set_xfconf_value xfce4-panel /plugins/plugin-6/icon-size int "$systray_icon_size" ||
+            warn "could not set the Notification Area icon size"
+    fi
+}
+
+configure_nm_applet() {
+    local system_file="/etc/xdg/autostart/nm-applet.desktop"
+    local autostart_dir="${XDG_CONFIG_HOME:-"$HOME/.config"}/autostart"
+    local autostart_file="$autostart_dir/nm-applet.desktop"
+    local exec_line="Exec=nm-applet"
+
+    if [ ! -f "$system_file" ]; then
+        return
+    fi
+    if [ "$WINDOW_SCALE" = "2x" ]; then
+        exec_line="Exec=nm-applet --indicator"
+    fi
+
+    if [ -e "$autostart_file" ] && ! grep -q '^X-OSXfce-Managed=true$' "$autostart_file"; then
+        warn "preserving existing NetworkManager autostart file at $autostart_file"
+        return
+    fi
+
+    log "Configuring NetworkManager Applet for ${WINDOW_SCALE} window scaling"
+    mkdir -p "$autostart_dir"
+    if [ ! -e "$autostart_file" ]; then
+        cp -a "$system_file" "$autostart_file"
+    fi
+    perl -0pi -e "s#^Exec=.*\$#$exec_line#m" "$autostart_file"
+    grep -q '^X-OSXfce-Managed=' "$autostart_file" ||
+        printf '%s\n' 'X-OSXfce-Managed=true' >> "$autostart_file"
+}
+
+initialize_osdockx_scale() {
+    local config_dir="${XDG_CONFIG_HOME:-"$HOME/.config"}/osdockx"
+    local config_file="$config_dir/config.toml"
+
+    if [ "$WINDOW_SCALE" != "2x" ] || [ -e "$config_file" ]; then
+        return
+    fi
+
+    log "Initializing OSDockX sizing for 2x window scaling"
+    mkdir -p "$config_dir"
+    printf '%s\n' \
+        '[dock]' \
+        'icon_size = 64' \
+        '' \
+        '[startup]' \
+        'autostart = true' \
+        'prompt_seen = true' \
+        > "$config_file"
 }
 
 offer_logout() {
@@ -466,9 +596,17 @@ install_cursor_theme
 install_osdockx
 install_osnotificationx
 install_appmenu
-prompt_window_scale
+if [ "$SKIP_PROFILE" -eq 0 ]; then
+    prompt_window_scale
+fi
 apply_profile
-apply_panel_background
+if [ "$SKIP_PROFILE" -eq 0 ]; then
+    apply_panel_background
+    install_hidpi_xfwm_theme
+    apply_window_scale
+    initialize_osdockx_scale
+    configure_nm_applet
+fi
 install_osdockx_autostart
 offer_logout
 
