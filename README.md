@@ -21,6 +21,15 @@ From this folder, run:
 
 The installer fetches the theme, icons, fonts, dock, notification applet, and the included XFCE profile. It will ask whether to use normal 1x or HiDPI/Retina 2x window scaling and may ask for your password to install the required Arch packages. The 2x option keeps the display at its native resolution while scaling GTK, the panel, window decorations, and the initial dock size together. When it finishes, log out and back in to enjoy the full effect.
 
+On laptops, the installer detects the system battery and adds XFCE's power
+manager indicator using Lion-style charge artwork. It also sizes the
+NetworkManager notification-area icon to match the menu bar.
+
+It also installs a lightweight session guard. At login and once per minute it
+checks the GTK, icon, cursor, font, and window-decoration selections and restores
+them if XFCE resets them. To inspect the current state without making changes,
+run `~/.local/bin/osxfce-theme-guard --check`.
+
 For options such as skipping package installation or choosing another profile, see:
 
 ```sh

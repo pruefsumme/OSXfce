@@ -10,7 +10,6 @@ It includes selected sanitized dotfiles only:
 - XFCE panel launcher files
 - Custom XFCE start menu icon
 - Default weather location for Olsztyn, Poland
-- OSDockX theme files
 - A 2x panel texture selected by the installer on HiDPI displays
 
 It intentionally excludes wallpapers, desktop icon positions, hardware/display
