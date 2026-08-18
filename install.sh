@@ -50,11 +50,18 @@ need() {
 clone_or_update() {
     local url="$1"
     local dest="$2"
+    local origin
 
     mkdir -p "$(dirname "$dest")"
     if [ -d "$dest/.git" ]; then
+        origin="$(git -C "$dest" remote get-url origin 2>/dev/null || true)"
+        if [ "$origin" != "$url" ]; then
+            die "cached repository at $dest has unexpected origin '${origin:-<none>}' (expected '$url')"
+        fi
         git -C "$dest" fetch --depth 1 origin
         git -C "$dest" reset --hard FETCH_HEAD
+    elif [ -e "$dest" ]; then
+        die "build path exists but is not a Git repository: $dest"
     else
         git clone --depth 1 "$url" "$dest"
     fi
@@ -64,7 +71,9 @@ sync_dir() {
     local src="$1"
     local dest="$2"
 
-    rm -rf "$dest"
+    [ -d "$src" ] || die "source directory not found: $src"
+    [ -n "$dest" ] && [ "$dest" != "/" ] || die "refusing unsafe sync destination: ${dest:-<empty>}"
+    rm -rf -- "$dest"
     mkdir -p "$dest"
     rsync -a --delete --exclude '.git' "$src"/ "$dest"/
 }
@@ -80,12 +89,13 @@ install_arch_deps() {
         return
     fi
 
+    command -v sudo >/dev/null 2>&1 || die "sudo is required to install Arch packages"
     log "Installing Arch package dependencies"
     sudo pacman -S --needed \
-        base-devel git rsync sudo fontconfig pkgconf gtk-update-icon-cache imagemagick \
+        base-devel git rsync sudo fontconfig perl pkgconf gtk-update-icon-cache imagemagick \
         gtk3 gtk4 glib2 glib2-devel gobject-introspection python-setuptools \
         sqlite rust meson ninja cmake vala appmenu-gtk-module libdbusmenu-glib libdbusmenu-gtk3 \
-        xfce4-panel xfconf xfce4-settings xfdesktop xfwm4 xfce4-appfinder \
+        xfce4-panel xfconf xfce4-settings xfdesktop xfwm4 xfce4-appfinder xfce4-power-manager \
         xfce4-pulseaudio-plugin xfce4-weather-plugin xfce4-notes-plugin xfce4-notifyd \
         network-manager-applet
 }
@@ -127,19 +137,86 @@ LUCIDA_SHA256
 
 install_xfce_theme() {
     local repo="$BUILD_ROOT/src/orchyn-XFCE"
+    local theme_dir="$HOME/.themes/OSX-Lion"
+    local panel_css="$theme_dir/gtk-3.0/osxfce-panel.css"
+    local gtk_css="$theme_dir/gtk-3.0/gtk.css"
 
     log "Installing OSX-Lion GTK/Xfwm theme"
     clone_or_update "https://github.com/orchyn/XFCE.git" "$repo"
-    sync_dir "$repo/OSX-Lion" "$HOME/.themes/OSX-Lion"
+    [ -f "$ROOT_DIR/assets/theme/osxfce-panel.css" ] ||
+        die "panel theme override not found in $ROOT_DIR/assets/theme"
+    [ -f "$repo/OSX-Lion/gtk-3.0/gtk.css" ] ||
+        die "upstream OSX-Lion GTK theme is incomplete"
+    sync_dir "$repo/OSX-Lion" "$theme_dir"
+    install -m 0644 "$ROOT_DIR/assets/theme/osxfce-panel.css" "$panel_css"
+    if ! grep -Fq '@import url("osxfce-panel.css");' "$gtk_css"; then
+        perl -0pi -e 's#\z#\n\@import url("osxfce-panel.css");\n#' "$gtk_css"
+    fi
+}
+
+install_lion_battery_icon() {
+    local status_dir="$1"
+    local source_name="$2"
+    local target_name="$3"
+
+    if [ ! -f "$status_dir/${source_name}.svg" ]; then
+        die "Lion battery source icon not found: $status_dir/${source_name}.svg"
+    fi
+
+    rm -f -- "$status_dir/${target_name}.svg" "$status_dir/${target_name}.png"
+    if command -v magick >/dev/null 2>&1; then
+        # Remove the original SVG padding without changing its proportions.
+        # The GTK theme gives the plugin a larger, unclipped paint area.
+        if magick -background none "$status_dir/${source_name}.svg" \
+            -trim +repage -resize '32x20>' \
+            -gravity center -extent 32x24 "$status_dir/${target_name}.png"; then
+            return
+        fi
+        warn "could not render ${target_name}.png; using the source SVG instead"
+        rm -f -- "$status_dir/${target_name}.png"
+    fi
+    ln -s "${source_name}.svg" "$status_dir/${target_name}.svg"
 }
 
 install_icon_theme() {
     local repo="$BUILD_ROOT/src/Mac-OS-X-Lion"
     local dest="${XDG_DATA_HOME:-"$HOME/.local/share"}/icons/Mac-OS-X-Lion"
+    local status_dir
+    local level
+    local lion_level
 
     log "Installing Mac OS X Lion icon theme"
     clone_or_update "https://github.com/B00merang-Artwork/Mac-OS-X-Lion.git" "$repo"
+    [ -f "$repo/index.theme" ] || die "upstream Mac OS X Lion icon theme is incomplete"
     sync_dir "$repo" "$dest"
+    # The upstream theme ships Lion battery and network icons here but omits
+    # the directory from its index, causing GTK to fall back to hicolor icons.
+    perl -0pi -e '
+        s/^(Directories=(?![^\r\n]*24x24\/status)[^\r\n]*)(\r?)$/$1,24x24\/status$2/m
+    ' "$dest/index.theme"
+    grep -q '^Directories=.*24x24/status' "$dest/index.theme" ||
+        die "could not register 24x24/status in the Lion icon theme index"
+    # Xfce 4.20 requests freedesktop battery-level-* names, while this older
+    # Lion theme uses battery-{000,020,...,100}. Provide theme-local aliases so
+    # the panel does not fall back to the green hicolor battery artwork.
+    status_dir="$dest/24x24/status"
+    [ -d "$status_dir" ] || die "upstream Lion status icons are missing"
+    for level in 0 10 20 30 40 50 60 70 80 90 100; do
+        case "$level" in
+            0) lion_level=000 ;;
+            10|20) lion_level=020 ;;
+            30|40) lion_level=040 ;;
+            50|60) lion_level=060 ;;
+            70|80) lion_level=080 ;;
+            90|100) lion_level=100 ;;
+        esac
+        install_lion_battery_icon "$status_dir" "battery-${lion_level}" \
+            "battery-level-${level}-symbolic"
+        install_lion_battery_icon "$status_dir" "battery-${lion_level}-charging" \
+            "battery-level-${level}-charging-symbolic"
+    done
+    install_lion_battery_icon "$status_dir" battery-charged \
+        battery-level-100-charged-symbolic
     if command -v gtk-update-icon-cache >/dev/null 2>&1; then
         gtk-update-icon-cache -f "$dest" >/dev/null 2>&1 || true
     fi
@@ -165,6 +242,7 @@ install_osdockx_autostart() {
     local autostart_dir="$HOME/.config/autostart"
     local autostart_file="$autostart_dir/dev.pruefsumme.OSDockX.desktop"
     local system_file="/usr/share/applications/dev.pruefsumme.OSDockX.desktop"
+    local user_bin_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
 
     # Resolve the osdockx binary robustly. The OSDockX installer drops the
     # binary at $XDG_BIN_HOME or $HOME/.local/bin, which is not always on
@@ -174,10 +252,8 @@ install_osdockx_autostart() {
     local osdockx_bin=""
     if command -v osdockx >/dev/null 2>&1; then
         osdockx_bin="$(command -v osdockx)"
-    elif [ -x "${XDG_BIN_HOME:-}/osdockx" ]; then
-        osdockx_bin="${XDG_BIN_HOME:-}/osdockx"
-    elif [ -x "$HOME/.local/bin/osdockx" ]; then
-        osdockx_bin="$HOME/.local/bin/osdockx"
+    elif [ -x "$user_bin_dir/osdockx" ]; then
+        osdockx_bin="$user_bin_dir/osdockx"
     fi
 
     if [ -z "$osdockx_bin" ]; then
@@ -195,7 +271,7 @@ install_osdockx_autostart() {
             'Type=Application' \
             'Name=OSDockX' \
             'Comment=A lightweight OSX-inspired dock for Linux/X11' \
-            "Exec=$osdockx_bin" \
+            "Exec=\"$osdockx_bin\"" \
             'Terminal=false' \
             'Categories=Utility;' \
             'StartupNotify=false' \
@@ -204,7 +280,9 @@ install_osdockx_autostart() {
 
     # Use the full path in Exec= so XFCE can launch the dock on next login
     # even if $HOME/.local/bin is not on the session's PATH.
-    perl -0pi -e "s#^Exec=.*\$#Exec=$osdockx_bin#m" "$autostart_file"
+    OSXFCE_DESKTOP_EXEC="$osdockx_bin" perl -0pi -e '
+        s#^Exec=.*$#Exec="$ENV{OSXFCE_DESKTOP_EXEC}"#m
+    ' "$autostart_file"
     grep -q '^X-GNOME-Autostart-enabled=' "$autostart_file" ||
         printf '%s\n' 'X-GNOME-Autostart-enabled=true' >> "$autostart_file"
 
@@ -219,54 +297,65 @@ install_osdockx_autostart() {
     fi
 }
 
+install_theme_guard() {
+    local bin_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
+    local guard="$bin_dir/osxfce-theme-guard"
+    local autostart_dir="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
+    local autostart_file="$autostart_dir/osxfce-theme-guard.desktop"
+
+    log "Installing OSXfce theme integrity guard"
+    [ -f "$ROOT_DIR/scripts/osxfce-theme-guard.sh" ] ||
+        die "theme guard source not found in $ROOT_DIR/scripts"
+    mkdir -p "$bin_dir" "$autostart_dir"
+    install -m 0755 "$ROOT_DIR/scripts/osxfce-theme-guard.sh" "$guard"
+    printf '%s\n' \
+        '[Desktop Entry]' \
+        'Type=Application' \
+        'Name=OSXfce Theme Guard' \
+        'Comment=Restore OSXfce appearance settings if they drift' \
+        "Exec=\"$guard\" --watch" \
+        'Terminal=false' \
+        'OnlyShowIn=XFCE;' \
+        'X-GNOME-Autostart-enabled=true' \
+        > "$autostart_file"
+
+    # Repair the current session immediately when the XFCE settings service is
+    # reachable. The autostart watcher retries on the next login otherwise.
+    "$guard" --repair || warn "theme guard could not repair this session; it will retry at next XFCE login"
+}
+
 install_osnotificationx() {
     local repo="$BUILD_ROOT/src/OSNotificationX"
 
     log "Installing OSNotificationX"
     clone_or_update "https://github.com/pruefsumme/OSNotificationX.git" "$repo"
-    (cd "$repo" && ./install-update.sh)
+    if (cd "$repo" && ./install-update.sh); then
+        return
+    fi
+
+    warn "OSNotificationX failed to build/install; continuing with the OSXfce theme repair."
+    warn "If its build cache has the wrong owner, fix the ownership shown above and retry later."
 }
 
 install_appmenu() {
     local repo="$BUILD_ROOT/aur/vala-panel-appmenu"
-    local conflicts=(
-        appmenu-glib-translator
-        appmenu-glib-translator-git
-        vala-panel-appmenu
-        vala-panel-appmenu-budgie
-        vala-panel-appmenu-budgie-git
-        vala-panel-appmenu-common-git
-        vala-panel-appmenu-jayatana
-        vala-panel-appmenu-jayatana-git
-        vala-panel-appmenu-locale
-        vala-panel-appmenu-locale-git
-        vala-panel-appmenu-mate
-        vala-panel-appmenu-mate-git
-        vala-panel-appmenu-registrar
-        vala-panel-appmenu-registrar-git
-        vala-panel-appmenu-valapanel
-        vala-panel-appmenu-valapanel-git
-        vala-panel-appmenu-xfce
-        vala-panel-appmenu-xfce-git
-    )
-    local installed=()
     local packages=()
 
     if [ "$INSTALL_APPMENU" -eq 0 ]; then
         warn "skipping Vala AppMenu; panel layout still contains an appmenu slot"
         return
     fi
+    if ! command -v pacman >/dev/null 2>&1 || ! command -v makepkg >/dev/null 2>&1; then
+        warn "pacman/makepkg not found; skipping the Arch-specific Vala AppMenu build"
+        return
+    fi
+    if ! command -v sudo >/dev/null 2>&1; then
+        warn "sudo not found; skipping the Vala AppMenu build"
+        return
+    fi
 
     log "Installing Vala AppMenu AUR package"
     warn "Using the stable vala-panel-appmenu package; stable and -git AppMenu packages conflict."
-
-    if command -v pacman >/dev/null 2>&1; then
-        mapfile -t installed < <(pacman -Qq "${conflicts[@]}" 2>/dev/null || true)
-        if [ "${#installed[@]}" -gt 0 ]; then
-            warn "Removing installed AppMenu packages before rebuilding: ${installed[*]}"
-            sudo pacman -Rns "${installed[@]}"
-        fi
-    fi
 
     clone_or_update "https://aur.archlinux.org/vala-panel-appmenu.git" "$repo"
     if (
@@ -289,6 +378,9 @@ install_appmenu() {
             [ -f "$package" ] && built_packages+=("$package")
         done
         [ "${#built_packages[@]}" -gt 0 ]
+
+        # Let pacman resolve conflicting AppMenu variants in the install
+        # transaction. If the transaction fails, the current packages remain.
         sudo pacman -U "${built_packages[@]}"
     ); then
         return
@@ -300,9 +392,11 @@ install_appmenu() {
 
 apply_profile() {
     local files_dir="$PROFILE_DIR/files"
-    local backup_dir="$HOME/.local/share/osxfce/backups/$(date +%Y%m%d-%H%M%S)"
+    local backup_root="$HOME/.local/share/osxfce/backups"
+    local backup_dir
     local account_name
     local gecos
+    local -a placeholder_roots=()
 
     if [ "$SKIP_PROFILE" -eq 1 ]; then
         warn "skipping XFCE profile application"
@@ -311,8 +405,9 @@ apply_profile() {
 
     [ -d "$files_dir" ] || die "profile files not found: $files_dir"
 
+    mkdir -p "$backup_root"
+    backup_dir="$(mktemp -d "$backup_root/$(date +%Y%m%d-%H%M%S)-XXXXXX")"
     log "Backing up existing matching config to $backup_dir"
-    mkdir -p "$backup_dir"
     for path in .config/xfce4 .config/osdockx/themes .config/autostart/dev.pruefsumme.OSDockX.desktop .config/autostart/nm-applet.desktop .local/share/osxfce/icons; do
         if [ -e "$HOME/$path" ]; then
             mkdir -p "$backup_dir/$(dirname "$path")"
@@ -337,7 +432,6 @@ apply_profile() {
     fi
     export OSXFCE_USER_NAME="$account_name"
 
-    placeholder_roots=()
     [ -d "$HOME/.config/xfce4" ] && placeholder_roots+=("$HOME/.config/xfce4")
     [ -d "$HOME/.config/osdockx" ] && placeholder_roots+=("$HOME/.config/osdockx")
     if [ "${#placeholder_roots[@]}" -gt 0 ]; then
@@ -368,7 +462,7 @@ prompt_window_scale() {
     printf '\nXFCE4 window scaling:\n'
     printf '  1) 1x  (default — standard DPI)\n'
     printf '  2) 2x  (HiDPI / 4K / Retina)\n'
-    read -r -p "Choice [1]: " response
+    read -r -p "Choice [1]: " response || response=""
     case "$response" in
         2|2x|2X) WINDOW_SCALE=2x ;;
         *)       WINDOW_SCALE=1x ;;
@@ -445,16 +539,145 @@ set_xfconf_value() {
     fi
 }
 
+configure_systray_icon_size() {
+    local icon_size="$1"
+    local id
+    local -a plugin_ids=()
+
+    mapfile -t plugin_ids < <(
+        xfconf-query -c xfce4-panel -p /panels/panel-1/plugin-ids 2>/dev/null |
+            sed -n '/^[0-9][0-9]*$/p'
+    )
+    for id in "${plugin_ids[@]}"; do
+        if [ "$(xfconf-query -c xfce4-panel -p "/plugins/plugin-${id}" 2>/dev/null || true)" = "systray" ]; then
+            set_xfconf_value xfce4-panel "/plugins/plugin-${id}/icon-size" int "$icon_size" ||
+                warn "could not set the Notification Area icon size"
+            return
+        fi
+    done
+    warn "could not find the Notification Area plugin; Wi-Fi icon size was not changed"
+}
+
+has_system_battery() {
+    local supply
+
+    for supply in /sys/class/power_supply/*; do
+        if [ -r "$supply/type" ] && [ "$(cat "$supply/type")" = "Battery" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+configure_battery_plugin() {
+    local plugin_id=""
+    local candidate=12
+    local id
+    local plugin_type
+    local previous_id=""
+    local previous_type=""
+    local insertion_anchor=""
+    local candidate_in_use
+    local inserted=0
+    local -a current_ids=()
+    local -a updated_ids=()
+    local -a set_args=()
+
+    if ! has_system_battery; then
+        log "No system battery detected; leaving the power-manager panel plugin disabled"
+        return
+    fi
+    if ! command -v xfconf-query >/dev/null 2>&1; then
+        warn "Battery detected, but xfconf-query is unavailable"
+        return
+    fi
+
+    log "Battery detected; enabling the Lion-styled power-manager panel plugin"
+    mapfile -t current_ids < <(
+        xfconf-query -c xfce4-panel -p /panels/panel-1/plugin-ids 2>/dev/null |
+            sed -n '/^[0-9][0-9]*$/p'
+    )
+    if [ "${#current_ids[@]}" -eq 0 ]; then
+        warn "could not read the panel plugin list; leaving it unchanged"
+        return
+    fi
+
+    # Reuse an existing power plugin when possible. Also locate the systray
+    # and its leading separator so the battery lands beside the Wi-Fi icon
+    # without relying on profile-specific plugin IDs.
+    for id in "${current_ids[@]}"; do
+        plugin_type="$(xfconf-query -c xfce4-panel -p "/plugins/plugin-${id}" 2>/dev/null || true)"
+        if [ "$plugin_type" = "power-manager-plugin" ] && [ -z "$plugin_id" ]; then
+            plugin_id="$id"
+        fi
+        if [ "$plugin_type" = "systray" ] && [ -z "$insertion_anchor" ]; then
+            insertion_anchor="$id"
+            if [ -n "$previous_id" ] && [ "$previous_type" = "separator" ]; then
+                insertion_anchor="$previous_id"
+            fi
+        fi
+        previous_id="$id"
+        previous_type="$plugin_type"
+    done
+
+    if [ -z "$plugin_id" ]; then
+        while :; do
+            candidate_in_use=0
+            for id in "${current_ids[@]}"; do
+                if [ "$id" -eq "$candidate" ]; then
+                    candidate_in_use=1
+                    break
+                fi
+            done
+            if [ "$candidate_in_use" -eq 0 ] &&
+                ! xfconf-query -c xfce4-panel -p "/plugins/plugin-${candidate}" >/dev/null 2>&1; then
+                plugin_id="$candidate"
+                break
+            fi
+            candidate=$((candidate + 1))
+            if [ "$candidate" -gt 10000 ]; then
+                warn "could not find an unused XFCE panel plugin ID for the battery"
+                return
+            fi
+        done
+    fi
+
+    set_xfconf_value xfce4-panel "/plugins/plugin-${plugin_id}" string power-manager-plugin || {
+        warn "could not configure the power-manager panel plugin"
+        return
+    }
+
+    for id in "${current_ids[@]}"; do
+        if [ "$id" -eq "$plugin_id" ]; then
+            inserted=1
+        elif [ -n "$insertion_anchor" ] && [ "$id" -eq "$insertion_anchor" ] && [ "$inserted" -eq 0 ]; then
+            updated_ids+=("$plugin_id")
+            inserted=1
+        fi
+        updated_ids+=("$id")
+    done
+    if [ "$inserted" -eq 0 ]; then
+        updated_ids+=("$plugin_id")
+    fi
+
+    set_args=(-c xfce4-panel -p /panels/panel-1/plugin-ids -a)
+    for id in "${updated_ids[@]}"; do
+        set_args+=(-t int -s "$id")
+    done
+    xfconf-query "${set_args[@]}" || warn "could not add the battery plugin to the panel"
+    set_xfconf_value xfce4-power-manager /xfce4-power-manager/show-panel-label int 1 ||
+        warn "could not enable the battery percentage label"
+}
+
 apply_window_scale() {
     local factor=1
     local cursor_size=24
-    local systray_icon_size=16
+    local systray_icon_size=20
     local xfwm_theme="OSX-Lion"
 
     if [ "$WINDOW_SCALE" = "2x" ]; then
         factor=2
         cursor_size=48
-        systray_icon_size=12
         if [ -d "$HOME/.themes/OSX-Lion-hidpi/xfwm4" ]; then
             xfwm_theme="OSX-Lion-hidpi"
         fi
@@ -477,12 +700,8 @@ apply_window_scale() {
     set_xfconf_value xfwm4 /general/title_font string "Lucida Grande Bold 9" ||
         warn "could not set the Xfwm title font"
 
-    # Legacy status icons can ignore the panel's HiDPI allocation. Cap the
-    # Notification Area icons below the panel-wide size to avoid edge clipping.
-    if [ "$(xfconf-query -c xfce4-panel -p /plugins/plugin-6 2>/dev/null || true)" = "systray" ]; then
-        set_xfconf_value xfce4-panel /plugins/plugin-6/icon-size int "$systray_icon_size" ||
-            warn "could not set the Notification Area icon size"
-    fi
+    # Keep legacy tray icons large enough to match the Lion menu-bar artwork.
+    configure_systray_icon_size "$systray_icon_size"
 }
 
 configure_nm_applet() {
@@ -540,7 +759,7 @@ offer_logout() {
 
     local response
     printf '\nThe new panel layout will not appear until you log out and back in.\n'
-    read -r -p "Log out now? [y/N] " response
+    read -r -p "Log out now? [y/N] " response || response=""
     case "$response" in
         [yY]|[yY][eE][sS])
             if [ -z "${DISPLAY:-}" ] || ! command -v xfce4-session-logout >/dev/null 2>&1; then
@@ -553,61 +772,78 @@ offer_logout() {
     esac
 }
 
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        --profile)
-            shift
-            [ "$#" -gt 0 ] || die "--profile needs a directory"
-            PROFILE_DIR="$1"
-            ;;
-        --no-profile)
-            SKIP_PROFILE=1
-            ;;
-        --skip-appmenu)
-            INSTALL_APPMENU=0
-            ;;
-        --skip-pacman)
-            SKIP_PACMAN=1
-            ;;
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        *)
-            die "unknown option: $1"
-            ;;
-    esac
-    shift
-done
+main() {
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --profile)
+                shift
+                [ "$#" -gt 0 ] || die "--profile needs a directory"
+                PROFILE_DIR="$1"
+                ;;
+            --no-profile)
+                SKIP_PROFILE=1
+                ;;
+            --skip-appmenu)
+                INSTALL_APPMENU=0
+                ;;
+            --skip-pacman)
+                SKIP_PACMAN=1
+                ;;
+            -h|--help)
+                usage
+                return
+                ;;
+            *)
+                die "unknown option: $1"
+                ;;
+        esac
+        shift
+    done
 
-need git
-need cp
-need find
-need perl
-need rsync
-need sha256sum
+    if [ "$(id -u)" -eq 0 ]; then
+        die "run this installer as your desktop user, not as root (it uses sudo when needed)"
+    fi
 
-mkdir -p "$BUILD_ROOT"
-install_arch_deps
-install_lucida_fonts
-install_xfce_theme
-install_icon_theme
-install_cursor_theme
-install_osdockx
-install_osnotificationx
-install_appmenu
-if [ "$SKIP_PROFILE" -eq 0 ]; then
+    mkdir -p "$BUILD_ROOT"
+    install_arch_deps
+    need cp
+    need fc-cache
+    need find
+    need git
+    need install
+    need mktemp
+    need perl
+    need rsync
+    need sha256sum
+    install_lucida_fonts
+    install_xfce_theme
+    install_icon_theme
+    install_cursor_theme
+    install_osdockx
+    install_osnotificationx
+    install_appmenu
+
+    if [ "$SKIP_PROFILE" -eq 1 ]; then
+        warn "skipping XFCE profile, session autostarts, and live appearance changes"
+        log "Done. Dependencies and assets were installed without changing the XFCE session."
+        return
+    fi
+
     prompt_window_scale
-fi
-apply_profile
-if [ "$SKIP_PROFILE" -eq 0 ]; then
+    apply_profile
     apply_panel_background
     install_hidpi_xfwm_theme
     apply_window_scale
+    configure_battery_plugin
     initialize_osdockx_scale
     configure_nm_applet
-fi
-install_osdockx_autostart
-offer_logout
+    install_osdockx_autostart
+    install_theme_guard
+    offer_logout
 
-log "Done. Log out via the XFCE session menu to see the new layout."
+    log "Done. Log out via the XFCE session menu to see the new layout."
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    main "$@"
+fi

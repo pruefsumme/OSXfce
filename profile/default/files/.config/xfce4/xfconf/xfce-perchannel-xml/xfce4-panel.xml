@@ -66,6 +66,7 @@
     </property>
     <property name="plugin-6" type="string" value="systray">
       <property name="square-icons" type="bool" value="true"/>
+      <property name="icon-size" type="int" value="20"/>
       
       
     </property>

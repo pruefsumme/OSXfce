@@ -1,0 +1,6 @@
+/* Keep the Lion battery's proportions while giving it a larger paint area. */
+#xfce4-power-manager-plugin image {
+  min-width: 22px;
+  min-height: 18px;
+  -gtk-icon-transform: translate(0, 3px) scale(1.35);
+}
