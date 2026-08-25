@@ -5,9 +5,10 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_ROOT="${OSXFCE_BUILD_ROOT:-"${XDG_CACHE_HOME:-"$HOME/.cache"}/osxfce-build"}"
 PROFILE_DIR="$ROOT_DIR/profile/default"
 INSTALL_APPMENU=1
-SKIP_PACMAN=0
+SKIP_PACKAGE_INSTALL=0
 SKIP_PROFILE=0
 WINDOW_SCALE=1x
+PACKAGE_MANAGER=""
 
 usage() {
     cat <<'USAGE'
@@ -16,8 +17,9 @@ Usage: ./install.sh [options]
 Options:
   --profile DIR       Apply a different profile directory.
   --no-profile        Install dependencies/assets only; do not apply XFCE config.
-  --skip-appmenu      Do not build/install Vala AppMenu AUR packages.
-  --skip-pacman       Do not install Arch package dependencies with pacman.
+  --skip-appmenu      Do not install/build the Vala AppMenu panel plugin.
+  --skip-packages     Do not install system package dependencies.
+  --skip-pacman       Alias for --skip-packages (backward compatibility).
   -h, --help          Show this help.
 
 Default behavior installs upstream dependencies, builds the custom dock and
@@ -45,6 +47,14 @@ die() {
 
 need() {
     command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+xfconf_run() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 8s xfconf-query "$@"
+    else
+        xfconf-query "$@"
+    fi
 }
 
 clone_or_update() {
@@ -79,16 +89,6 @@ sync_dir() {
 }
 
 install_arch_deps() {
-    if [ "$SKIP_PACMAN" -eq 1 ]; then
-        warn "skipping pacman dependency install"
-        return
-    fi
-
-    if ! command -v pacman >/dev/null 2>&1; then
-        warn "pacman not found; install dependencies manually for this distro"
-        return
-    fi
-
     command -v sudo >/dev/null 2>&1 || die "sudo is required to install Arch packages"
     log "Installing Arch package dependencies"
     sudo pacman -S --needed \
@@ -98,6 +98,119 @@ install_arch_deps() {
         xfce4-panel xfconf xfce4-settings xfdesktop xfwm4 xfce4-appfinder xfce4-power-manager \
         xfce4-pulseaudio-plugin xfce4-weather-plugin xfce4-notes-plugin xfce4-notifyd \
         network-manager-applet
+}
+
+apt_package_available() {
+    apt-cache show "$1" >/dev/null 2>&1
+}
+
+install_apt_deps() {
+    local package
+    local -a packages=(
+        build-essential ca-certificates curl git rsync sudo fontconfig perl pkg-config
+        libgtk-3-bin imagemagick libgtk-3-dev libgtk-4-dev libglib2.0-dev
+        libsqlite3-dev libxfce4panel-2.0-dev libxfce4ui-2-dev libxfconf-0-dev
+        meson ninja-build rustc cargo
+        xfce4-panel xfconf xfce4-settings xfdesktop4 xfwm4 xfce4-appfinder
+        xfce4-power-manager xfce4-notifyd
+    )
+    local -a optional_packages=(
+        xfce4-power-manager-plugins xfce4-pulseaudio-plugin xfce4-weather-plugin
+        xfce4-notes-plugin network-manager-gnome
+    )
+
+    command -v sudo >/dev/null 2>&1 || die "sudo is required to install Debian/Ubuntu packages"
+    command -v apt-cache >/dev/null 2>&1 || die "apt-cache is required to resolve Debian/Ubuntu packages"
+
+    if [ "$INSTALL_APPMENU" -eq 1 ]; then
+        optional_packages+=(xfce4-appmenu-plugin appmenu-gtk3-module)
+    fi
+
+    log "Refreshing APT package metadata"
+    sudo apt-get update
+    for package in "${optional_packages[@]}"; do
+        if apt_package_available "$package"; then
+            packages+=("$package")
+        else
+            warn "optional APT package is unavailable in the configured repositories: $package"
+        fi
+    done
+
+    log "Installing Debian/Ubuntu package dependencies"
+    sudo apt-get install -y --no-install-recommends "${packages[@]}"
+}
+
+detect_package_manager() {
+    local ID=""
+    local ID_LIKE=""
+
+    if [ -r /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        case " $ID $ID_LIKE " in
+            *" debian "*|*" ubuntu "*|*" linuxmint "*) printf '%s\n' apt; return ;;
+            *" arch "*) printf '%s\n' pacman; return ;;
+        esac
+    fi
+    if command -v apt-get >/dev/null 2>&1; then
+        printf '%s\n' apt
+    elif command -v pacman >/dev/null 2>&1; then
+        printf '%s\n' pacman
+    else
+        printf '%s\n' unknown
+    fi
+}
+
+install_system_deps() {
+    PACKAGE_MANAGER="$(detect_package_manager)"
+    if [ "$SKIP_PACKAGE_INSTALL" -eq 1 ]; then
+        warn "skipping system package dependency install"
+        return
+    fi
+
+    case "$PACKAGE_MANAGER" in
+        apt) install_apt_deps ;;
+        pacman) install_arch_deps ;;
+        *) warn "no supported package manager found; install dependencies manually" ;;
+    esac
+}
+
+rust_version_is_supported() {
+    local version
+    local major
+    local minor
+
+    command -v rustc >/dev/null 2>&1 || return 1
+    command -v cargo >/dev/null 2>&1 || return 1
+    version="$(rustc --version 2>/dev/null | awk '{print $2}')"
+    IFS=. read -r major minor _ <<<"$version"
+    case "$major:$minor" in
+        *[!0-9:]*|:*) return 1 ;;
+    esac
+    [ "$major" -gt 1 ] || { [ "$major" -eq 1 ] && [ "$minor" -ge 92 ]; }
+}
+
+ensure_rust_toolchain() {
+    local installer="$BUILD_ROOT/rustup-init.sh"
+
+    if [ -x "$HOME/.cargo/bin/rustc" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+        export PATH="$HOME/.cargo/bin:$PATH"
+        hash -r
+    fi
+    if rust_version_is_supported; then
+        return
+    fi
+    if [ "$SKIP_PACKAGE_INSTALL" -eq 1 ]; then
+        die "OSDockX requires Rust 1.92 or newer; install it or rerun without --skip-packages"
+    fi
+
+    need curl
+    log "Installing a current user-local Rust toolchain for OSDockX"
+    curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs -o "$installer"
+    sh "$installer" -y --profile minimal --default-toolchain stable --no-modify-path
+    export PATH="$HOME/.cargo/bin:$PATH"
+    hash -r
+    rust_version_is_supported || die "Rust 1.92 or newer is required to build OSDockX"
 }
 
 install_lucida_fonts() {
@@ -321,7 +434,13 @@ install_theme_guard() {
 
     # Repair the current session immediately when the XFCE settings service is
     # reachable. The autostart watcher retries on the next login otherwise.
-    "$guard" --repair || warn "theme guard could not repair this session; it will retry at next XFCE login"
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 30s "$guard" --repair ||
+            warn "theme guard could not repair this session; it will retry at next XFCE login"
+    else
+        "$guard" --repair ||
+            warn "theme guard could not repair this session; it will retry at next XFCE login"
+    fi
 }
 
 install_osnotificationx() {
@@ -343,6 +462,15 @@ install_appmenu() {
 
     if [ "$INSTALL_APPMENU" -eq 0 ]; then
         warn "skipping Vala AppMenu; panel layout still contains an appmenu slot"
+        return
+    fi
+    if [ "$PACKAGE_MANAGER" = "apt" ]; then
+        if dpkg-query -W -f='${Status}' xfce4-appmenu-plugin 2>/dev/null |
+            grep -Fq 'install ok installed'; then
+            log "Using the Debian/Ubuntu Vala AppMenu package"
+        else
+            warn "xfce4-appmenu-plugin is not installed; panel layout still contains an appmenu slot"
+        fi
         return
     fi
     if ! command -v pacman >/dev/null 2>&1 || ! command -v makepkg >/dev/null 2>&1; then
@@ -440,11 +568,11 @@ apply_profile() {
     fi
 
     if command -v xfconf-query >/dev/null 2>&1; then
-        xfconf-query -c xsettings -p /Net/ThemeName -s OSX-Lion 2>/dev/null || true
-        xfconf-query -c xsettings -p /Net/IconThemeName -s Mac-OS-X-Lion 2>/dev/null || true
-        xfconf-query -c xsettings -p /Gtk/CursorThemeName -s WhiteSur-cursors 2>/dev/null || true
-        xfconf-query -c xsettings -p /Gtk/FontName -s "Lucida Sans Unicode 11" 2>/dev/null || true
-        xfconf-query -c xfwm4 -p /general/theme -s OSX-Lion 2>/dev/null || true
+        xfconf_run -c xsettings -p /Net/ThemeName -s OSX-Lion 2>/dev/null || true
+        xfconf_run -c xsettings -p /Net/IconThemeName -s Mac-OS-X-Lion 2>/dev/null || true
+        xfconf_run -c xsettings -p /Gtk/CursorThemeName -s WhiteSur-cursors 2>/dev/null || true
+        xfconf_run -c xsettings -p /Gtk/FontName -s "Lucida Sans Unicode 11" 2>/dev/null || true
+        xfconf_run -c xfwm4 -p /general/theme -s OSX-Lion 2>/dev/null || true
     fi
 }
 
@@ -532,10 +660,10 @@ set_xfconf_value() {
     local type="$3"
     local value="$4"
 
-    if xfconf-query -c "$channel" -p "$property" >/dev/null 2>&1; then
-        xfconf-query -c "$channel" -p "$property" -s "$value"
+    if xfconf_run -c "$channel" -p "$property" >/dev/null 2>&1; then
+        xfconf_run -c "$channel" -p "$property" -s "$value"
     else
-        xfconf-query -c "$channel" -p "$property" -n -t "$type" -s "$value"
+        xfconf_run -c "$channel" -p "$property" -n -t "$type" -s "$value"
     fi
 }
 
@@ -545,11 +673,11 @@ configure_systray_icon_size() {
     local -a plugin_ids=()
 
     mapfile -t plugin_ids < <(
-        xfconf-query -c xfce4-panel -p /panels/panel-1/plugin-ids 2>/dev/null |
+        xfconf_run -c xfce4-panel -p /panels/panel-1/plugin-ids 2>/dev/null |
             sed -n '/^[0-9][0-9]*$/p'
     )
     for id in "${plugin_ids[@]}"; do
-        if [ "$(xfconf-query -c xfce4-panel -p "/plugins/plugin-${id}" 2>/dev/null || true)" = "systray" ]; then
+        if [ "$(xfconf_run -c xfce4-panel -p "/plugins/plugin-${id}" 2>/dev/null || true)" = "systray" ]; then
             set_xfconf_value xfce4-panel "/plugins/plugin-${id}/icon-size" int "$icon_size" ||
                 warn "could not set the Notification Area icon size"
             return
@@ -594,7 +722,7 @@ configure_battery_plugin() {
 
     log "Battery detected; enabling the Lion-styled power-manager panel plugin"
     mapfile -t current_ids < <(
-        xfconf-query -c xfce4-panel -p /panels/panel-1/plugin-ids 2>/dev/null |
+        xfconf_run -c xfce4-panel -p /panels/panel-1/plugin-ids 2>/dev/null |
             sed -n '/^[0-9][0-9]*$/p'
     )
     if [ "${#current_ids[@]}" -eq 0 ]; then
@@ -606,7 +734,7 @@ configure_battery_plugin() {
     # and its leading separator so the battery lands beside the Wi-Fi icon
     # without relying on profile-specific plugin IDs.
     for id in "${current_ids[@]}"; do
-        plugin_type="$(xfconf-query -c xfce4-panel -p "/plugins/plugin-${id}" 2>/dev/null || true)"
+        plugin_type="$(xfconf_run -c xfce4-panel -p "/plugins/plugin-${id}" 2>/dev/null || true)"
         if [ "$plugin_type" = "power-manager-plugin" ] && [ -z "$plugin_id" ]; then
             plugin_id="$id"
         fi
@@ -630,7 +758,7 @@ configure_battery_plugin() {
                 fi
             done
             if [ "$candidate_in_use" -eq 0 ] &&
-                ! xfconf-query -c xfce4-panel -p "/plugins/plugin-${candidate}" >/dev/null 2>&1; then
+                ! xfconf_run -c xfce4-panel -p "/plugins/plugin-${candidate}" >/dev/null 2>&1; then
                 plugin_id="$candidate"
                 break
             fi
@@ -664,7 +792,7 @@ configure_battery_plugin() {
     for id in "${updated_ids[@]}"; do
         set_args+=(-t int -s "$id")
     done
-    xfconf-query "${set_args[@]}" || warn "could not add the battery plugin to the panel"
+    xfconf_run "${set_args[@]}" || warn "could not add the battery plugin to the panel"
     set_xfconf_value xfce4-power-manager /xfce4-power-manager/show-panel-label int 1 ||
         warn "could not enable the battery percentage label"
 }
@@ -786,8 +914,8 @@ main() {
             --skip-appmenu)
                 INSTALL_APPMENU=0
                 ;;
-            --skip-pacman)
-                SKIP_PACMAN=1
+            --skip-packages|--skip-pacman)
+                SKIP_PACKAGE_INSTALL=1
                 ;;
             -h|--help)
                 usage
@@ -805,7 +933,8 @@ main() {
     fi
 
     mkdir -p "$BUILD_ROOT"
-    install_arch_deps
+    install_system_deps
+    ensure_rust_toolchain
     need cp
     need fc-cache
     need find

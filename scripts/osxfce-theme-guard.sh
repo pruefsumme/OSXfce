@@ -16,6 +16,14 @@ log() {
     printf 'osxfce-theme-guard: %s\n' "$*" >&2
 }
 
+xfconf_run() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 8s xfconf-query "$@"
+    else
+        xfconf-query "$@"
+    fi
+}
+
 usage() {
     cat <<'USAGE'
 Usage: osxfce-theme-guard [--check | --repair | --watch]
@@ -53,7 +61,7 @@ ensure_setting() {
     local expected="$5"
     local current
 
-    current="$(xfconf-query -c "$channel" -p "$property" 2>/dev/null)" || current=""
+    current="$(xfconf_run -c "$channel" -p "$property" 2>/dev/null)" || current=""
     if [ "$current" = "$expected" ]; then
         return 0
     fi
@@ -63,11 +71,11 @@ ensure_setting() {
         return 1
     fi
 
-    if xfconf-query -c "$channel" -p "$property" -s "$expected" 2>/dev/null; then
+    if xfconf_run -c "$channel" -p "$property" -s "$expected" 2>/dev/null; then
         log "restored $channel $property to '$expected'"
         return 0
     fi
-    if xfconf-query -c "$channel" -p "$property" -n -t "$type" -s "$expected" 2>/dev/null; then
+    if xfconf_run -c "$channel" -p "$property" -n -t "$type" -s "$expected" 2>/dev/null; then
         log "created $channel $property as '$expected'"
         return 0
     fi
@@ -82,11 +90,11 @@ ensure_systray_icon_size() {
     local -a plugin_ids=()
 
     mapfile -t plugin_ids < <(
-        xfconf-query -c xfce4-panel -p /panels/panel-1/plugin-ids 2>/dev/null |
+        xfconf_run -c xfce4-panel -p /panels/panel-1/plugin-ids 2>/dev/null |
             sed -n '/^[0-9][0-9]*$/p'
     )
     for id in "${plugin_ids[@]}"; do
-        if [ "$(xfconf-query -c xfce4-panel -p "/plugins/plugin-${id}" 2>/dev/null || true)" = "systray" ]; then
+        if [ "$(xfconf_run -c xfce4-panel -p "/plugins/plugin-${id}" 2>/dev/null || true)" = "systray" ]; then
             ensure_setting "$repair" xfce4-panel "/plugins/plugin-${id}/icon-size" int 20
             return
         fi
@@ -107,7 +115,7 @@ check_once() {
     }
     asset_checks || failed=1
 
-    scale="$(xfconf-query -c xsettings -p /Gdk/WindowScalingFactor 2>/dev/null)" || scale=1
+    scale="$(xfconf_run -c xsettings -p /Gdk/WindowScalingFactor 2>/dev/null)" || scale=1
     if [ "$scale" = 2 ] && [ -f "$HOME/.themes/OSX-Lion-hidpi/xfwm4/themerc" ]; then
         xfwm_theme="OSX-Lion-hidpi"
     fi
